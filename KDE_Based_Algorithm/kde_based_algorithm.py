@@ -111,6 +111,9 @@ class KDE_Based_Algorithm:
 
         targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
 
+        max_candidate_pairs = self.datasetDelimiter * len(targetData)
+        selected_pairs = set(random.sample(range(0, max_candidate_pairs), self.SAMPLE_SIZE))
+
         targetGeomId, pairId = 0, 0
         for targetGeom in targetData:
             if self.maxFeatures[1] < targetGeom.envelope.area:
@@ -383,7 +386,7 @@ class KDE_Based_Algorithm:
                 if isRelated:
                     prediction = self.classifier.predict(np.array([currentInstance]))
                     positiveDecisions += 1
-                    Prediction_probs.append(float(self.classifier.predict_proba(np.array([currentInstance]))[0, 1]))
+                    Prediction_probs.append(float(self.classifier.predict_proba(np.array([currentInstance]))[0, 0]))
 
 
         Prediction_probs = pd.DataFrame({'0': Prediction_probs})
@@ -404,7 +407,7 @@ class KDE_Based_Algorithm:
                 totalDecisions += 1
                 currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
                 prediction = self.classifier.predict(np.array([currentInstance]))
-                prediction_probability = self.classifier.predict_proba(np.array([currentInstance]))[0, 1]
+                prediction_probability = self.classifier.predict_proba(np.array([currentInstance]))[0, 0]
 
                 if float(prediction_probability) >= self.minimum_probability_threshold:
                     self.qualifying_distance_vector = 0
