@@ -360,20 +360,22 @@ class Extrapolation:
         Prediction_probs, retainedPairs = [], []
         targetId, totalDecisions, positiveDecisions, truePositiveDecisions = 0, 0, 0, 0
         targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
+
         for targetGeom in targetData:
           candidateMatches = self.getCandidates(targetId,  targetGeom)
 
           for candidateMatchId in candidateMatches:
+
               if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
                 if (candidateMatchId, targetId) in self.verifiedPairs:
                   continue
-
                 totalDecisions += 1
                 currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
                 prediction = self.classifier.predict(np.array([currentInstance]))
-                if prediction == [1]:
+             #   if prediction == [1]:
+                if float(self.classifier.predict_proba(np.array([currentInstance]))[0,0]) > float(self.classifier.predict_proba(np.array([currentInstance]))[0,1]):
                     positiveDecisions += 1
-                    weight = float(self.classifier.predict_proba(np.array([currentInstance]))[0,1])
+                    weight = float(self.classifier.predict_proba(np.array([currentInstance]))[0,0])
                     retainedPairs.append((weight, candidateMatchId, targetId, targetGeom))
           targetId += 1
 
