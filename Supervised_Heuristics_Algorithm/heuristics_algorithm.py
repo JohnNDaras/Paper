@@ -377,7 +377,7 @@ class Heuristics_Algorithm:
           targetId += 1
 
         # Sort the list of tuples based on the first value of each tuple
-        retainedPairs = sorted(retainedPairs, key=lambda x: x[0])
+        retainedPairs = sorted(retainedPairs, key=lambda x: x[0], reverse=True)
 
         counter = len(self.verifiedPairs)
         print("Positive Decisions\t:\t" + str(positiveDecisions))
