@@ -37,7 +37,7 @@ class Heuristics_Algorithm:
         self.wScheme = wScheme
 
     def getMethodName(self):
-      return 'progressive GIA.nt'
+      return 'Heuristics Algorithm with Unsupervised Scheduling'
 
 
     def addToIndex(self, geometryId, envelope) :
