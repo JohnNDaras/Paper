@@ -147,7 +147,7 @@ class Extrapolation:
                     if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
                         self.totalCandidatePairs += 1                               
 
-                        #Create sample for Training
+                        #Create sample
                         if len(self.sample) < self.SAMPLE_SIZE:
                               self.random_number = random.randint(0, 15)
                               if self.random_number == 0:
