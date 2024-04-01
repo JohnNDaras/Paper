@@ -4,5 +4,5 @@ main_dir = '../content/drive/MyDrive/s2/'
 x=0
 print('Enter desired recall:')
 x = input()
-sg = SupervisedGIAnt(budget=40000, qPairs = 100, delimiter='\t',  sourceFilePath=main_dir + 'sourceSample.tsv', targetFilePath=main_dir + 'targetSample.tsv', users_input=float(x))
+sg = Extrapolation(budget=500000, qPairs = 100, delimiter='\t',  sourceFilePath=main_dir + 'sourceSample.tsv', targetFilePath=main_dir + 'targetSample.tsv', users_input=float(x))
 sg.applyProcessing()
