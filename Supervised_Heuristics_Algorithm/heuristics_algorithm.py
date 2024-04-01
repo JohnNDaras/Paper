@@ -10,6 +10,9 @@ from shapely.geometry import LineString, MultiPolygon, Polygon
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import LeaveOneOut
+from queue import PriorityQueue
+from utilities import CsvReader
+from datamodel import RelatedGeometries
 
 class Heuristics_Algorithm:
 
@@ -24,8 +27,7 @@ class Heuristics_Algorithm:
         self.POSITIVE_PAIR = 1
         self.NEGATIVE_PAIR = 0
         self.trainingPhase = False
-        self.detectedQP = 0
-        self.totalCandidatePairs = 0
+
         self.budget = budget
         self.delimiter = delimiter
         self.sourceData = CsvReader.readAllEntities(delimiter, sourceFilePath)
@@ -37,6 +39,7 @@ class Heuristics_Algorithm:
         self.sample = []
         self.spatialIndex = defaultdict(lambda: defaultdict(list))
         self.verifiedPairs = set()
+        self.minimum_probability_threshold = 0
         self.thetaX = -1
         self.thetaY = -1
 
@@ -82,6 +85,7 @@ class Heuristics_Algorithm:
         self.totalCooccurrences =  [0] * len(self.sourceData)
         self.maxFeatures = [-sys.float_info.max] * self.NO_OF_FEATURES
         self.minFeatures = [sys.float_info.max] * self.NO_OF_FEATURES
+        self.totalCandidatePairs = 0
         for s in self.sourceData:
             if self.maxFeatures[0] < s.envelope.area:
                 self.maxFeatures[0] = s.envelope.area
@@ -109,7 +113,7 @@ class Heuristics_Algorithm:
             if s.length < self.minFeatures[8]:
                 self.minFeatures[8] = s.length
 
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
+        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
         targetGeomId, pairId = 0, 0
         for targetGeom in targetData:
@@ -169,7 +173,7 @@ class Heuristics_Algorithm:
 
                   if self.frequency[candidateMatchId] < self.minFeatures[5]:
                       self.minFeatures[5] = self.frequency[candidateMatchId]
-
+                  
                   #Create sample for training
                   if len(self.sample) < self.SAMPLE_SIZE:
                         self.random_number = random.randint(0, 10)
@@ -225,6 +229,8 @@ class Heuristics_Algorithm:
         elif isinstance(geometry, MultiPolygon):
             return sum([len(polygon.exterior.coords) for polygon in geometry.geoms])
         else:
+            #print(type(geometry))
+            #print(geometry)
             return 0
 
     def getCandidates(self, targetId, targetGeom):
@@ -263,20 +269,23 @@ class Heuristics_Algorithm:
 
     def trainModel(self):
         self.trainingPhase = True
+
         random.shuffle(self.sample)
+        #print(self.sample)
         negativeClassFull, positiveClassFull = False, False
         negativePairs, positivePairs = [], []
         excessVerifications = 0
         for sourceId, targetId, targetGeom in self.sample:
             if negativeClassFull and positiveClassFull:
                 break
+
             isRelated = self.relations.verifyRelations(sourceId, targetId, self.sourceData[sourceId], targetGeom, None, None, 0, 0 )
             self.verifiedPairs.add((sourceId, targetId))
+            #print(self.verifiedPairs)
 
             if isRelated:
                 if len(positivePairs) < self.CLASS_SIZE:
                     positivePairs.append((sourceId, targetId, targetGeom))
-                    self.detectedQP += 1
                 else:
                     excessVerifications += 1
                     positiveClassFull = True
@@ -307,6 +316,7 @@ class Heuristics_Algorithm:
             self.classifier = LogisticRegression(max_iter=1000)
             self.classifier.fit(X, y)
         self.trainingPhase = False
+
 
     def get_feature_vector(self, sourceId, targetId, targetGeom):
         featureVector = [0] * (self.NO_OF_FEATURES)
@@ -356,37 +366,31 @@ class Heuristics_Algorithm:
       return (maxX - minX + 1) * (maxY - minY + 1)
 
     def verification(self):
-        retainedPairs = []
-        targetId, totalDecisions, positiveDecisions = 0, 0, 0
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
+        self.topKPairs = PriorityQueue(self.budget + 1)
+        minimumWeight = -1
+        targetId, totalDecisions, positiveDecisions, truePositiveDecisions = 0, 0, 0, 0
+        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
         for targetGeom in targetData:
-          candidateMatches = self.getCandidates(targetId,  targetGeom)
-
-          for candidateMatchId in candidateMatches:
-              if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
-                if (candidateMatchId, targetId) in self.verifiedPairs:
-                  continue
-
-                totalDecisions += 1
-                currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
-                prediction = self.classifier.predict(np.array([currentInstance]))
-                if prediction == [1]:
-                    positiveDecisions += 1
-                    weight = float(self.classifier.predict_proba(np.array([currentInstance]))[0,1])
-                    retainedPairs.append((weight, candidateMatchId, targetId, targetGeom))
+          candidates = self.getCandidates(targetId,targetGeom)
+          for candidateMatchId in candidates:
+                    if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
+                        currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
+                        weight = float(self.classifier.predict_proba(np.array([currentInstance]))[0,0])
+                        #insert into priority queu with size K=maxVerifications
+                        #the priority queue stores the pairs in decreasing weight
+                        if (minimumWeight <= weight):
+                          self.topKPairs.put((weight, candidateMatchId, targetId, targetGeom))
+                          if (self.budget < self.topKPairs.qsize()):
+                              minimumWeight = self.topKPairs.get()[0]
           targetId += 1
 
-        # Sort the list of tuples based on the first value of each tuple
-        retainedPairs = sorted(retainedPairs, key=lambda x: x[0], reverse=True)
-
-        counter = len(self.verifiedPairs)
-        print("Positive Decisions\t:\t" + str(positiveDecisions))
-        print("Total Decisions\t:\t" + str(totalDecisions))
-        for weight, sourceId, targetId, targetGeom in retainedPairs:
-          counter += 1
-
-          if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom, self.heuristicCondition, self.condition_limit , self.dynamic_factor, self.violation_limit) == 2:
+        #verify the K pairs in the priority queue
+        counter = 0
+        while(not self.topKPairs.empty()):
+            counter += 1
+            weight, source_id, target_id, tEntity = self.topKPairs.get()
+            if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom, self.heuristicCondition, self.condition_limit , self.dynamic_factor, self.violation_limit) == 2:
               print("finish the program and return")
               return
-          if (self.budget == counter):
-            break
+            if (self.budget == counter):
+              break
