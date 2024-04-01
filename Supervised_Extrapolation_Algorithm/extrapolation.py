@@ -113,7 +113,7 @@ class Extrapolation:
             if s.length < self.minFeatures[8]:
                 self.minFeatures[8] = s.length
 
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
+        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
         targetGeomId, pairId = 0, 0
         for targetGeom in targetData:
