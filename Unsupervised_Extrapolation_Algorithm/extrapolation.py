@@ -14,6 +14,7 @@ from queue import PriorityQueue
 from utilities import CsvReader
 from datamodel import RelatedGeometries
 
+
 class Extrapolation:
 
     def __init__(self, budget,  qPairs,  delimiter,  sourceFilePath,  targetFilePath, wScheme, users_input) :
@@ -34,7 +35,7 @@ class Extrapolation:
         self.wScheme = wScheme
 
     def getMethodName(self):
-      return 'progressive GIA.nt'
+      return 'Extrapolation Algoithm with Unsupervised Scheduling'
 
 
     def addToIndex(self, geometryId, envelope) :
@@ -130,7 +131,7 @@ class Extrapolation:
     def validCandidate(self, candidateId, targetEnv):
         return self.sourceData[candidateId].envelope.intersects(targetEnv)
 
-    def initialization(self): # reads target geometries on the fly
+    def initialization(self): # reads target geometries
         self.flag = [-1] * len(self.sourceData)
         self.freq = [-1] * len(self.sourceData)
         self.topKPairs = PriorityQueue(maxsize = self.budget + 1)
@@ -138,13 +139,13 @@ class Extrapolation:
         geoCollections = 0
         minimumWeight = -1
         targetId, totalDecisions, positiveDecisions, truePositiveDecisions = 0, 0, 0, 0
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
+        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
         for targetGeom in targetData:
           candidates = self.getCandidates(targetId,targetGeom)
           for candidateMatchId in candidates:
                     if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
-                        self.totalCandidatePairs += 1                               ######################################################
+                        self.totalCandidatePairs += 1                               
 
                         #Create sample for Training
                         if len(self.sample) < self.SAMPLE_SIZE:
