@@ -141,15 +141,15 @@ class Heuristics_Algorithm:
         geoCollections = 0
         minimumWeight = -1
         targetId, totalDecisions, positiveDecisions, truePositiveDecisions = 0, 0, 0, 0
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
+        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
         for targetGeom in targetData:
           candidates = self.getCandidates(targetId,targetGeom)
           for candidateMatchId in candidates:
                     if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
-                        self.totalCandidatePairs += 1                               
+                        self.totalCandidatePairs += 1
 
-                        #Create sample of SAMPLE_SIZE items
+                        #Create sample
                         if len(self.sample) < self.SAMPLE_SIZE:
                               self.random_number = random.randint(0, 15)
                               if self.random_number == 0:
