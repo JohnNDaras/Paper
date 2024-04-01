@@ -10,6 +10,7 @@ from shapely.geometry import LineString, MultiPolygon, Polygon
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import LeaveOneOut
+from queue import PriorityQueue
 from utilities import CsvReader
 from datamodel import RelatedGeometries
 
@@ -25,6 +26,7 @@ class Extrapolation:
         self.trainingPhase = False
         self.detectedQP = 0
         self.totalCandidatePairs = 0
+
         self.budget = budget
         self.delimiter = delimiter
         self.sourceData = CsvReader.readAllEntities(delimiter, sourceFilePath)
@@ -34,8 +36,10 @@ class Extrapolation:
         self.datasetDelimiter = len(self.sourceData)
         self.relations = RelatedGeometries(qPairs)
         self.sample = []
+        self.sample_for_verification = []
         self.spatialIndex = defaultdict(lambda: defaultdict(list))
         self.verifiedPairs = set()
+        self.minimum_probability_threshold = 0
         self.thetaX = -1
         self.thetaY = -1
 
@@ -81,6 +85,7 @@ class Extrapolation:
         self.totalCooccurrences =  [0] * len(self.sourceData)
         self.maxFeatures = [-sys.float_info.max] * self.NO_OF_FEATURES
         self.minFeatures = [sys.float_info.max] * self.NO_OF_FEATURES
+        self.totalCandidatePairs = 0
         for s in self.sourceData:
             if self.maxFeatures[0] < s.envelope.area:
                 self.maxFeatures[0] = s.envelope.area
@@ -168,12 +173,13 @@ class Extrapolation:
 
                   if self.frequency[candidateMatchId] < self.minFeatures[5]:
                       self.minFeatures[5] = self.frequency[candidateMatchId]
-
+         
                   #Create sample for training
                   if len(self.sample) < self.SAMPLE_SIZE:
                         self.random_number = random.randint(0, 10)
                         if self.random_number == 0:
                           self.sample.append((candidateMatchId, targetGeomId, targetGeom))
+
 
                   pairId += 1
 
@@ -224,6 +230,8 @@ class Extrapolation:
         elif isinstance(geometry, MultiPolygon):
             return sum([len(polygon.exterior.coords) for polygon in geometry.geoms])
         else:
+            #print(type(geometry))
+            #print(geometry)
             return 0
 
     def getCandidates(self, targetId, targetGeom):
@@ -262,7 +270,9 @@ class Extrapolation:
 
     def trainModel(self):
         self.trainingPhase = True
+
         random.shuffle(self.sample)
+        #print(self.sample)
         negativeClassFull, positiveClassFull = False, False
         negativePairs, positivePairs = [], []
         excessVerifications = 0
@@ -272,6 +282,7 @@ class Extrapolation:
 
             isRelated = self.relations.verifyRelations(sourceId, targetId, self.sourceData[sourceId], targetGeom)
             self.verifiedPairs.add((sourceId, targetId))
+            #print(self.verifiedPairs)
 
             if isRelated:
                 if len(positivePairs) < self.CLASS_SIZE:
@@ -307,6 +318,7 @@ class Extrapolation:
             self.classifier = LogisticRegression(max_iter=1000)
             self.classifier.fit(X, y)
         self.trainingPhase = False
+
 
     def get_feature_vector(self, sourceId, targetId, targetGeom):
         featureVector = [0] * (self.NO_OF_FEATURES)
@@ -357,39 +369,31 @@ class Extrapolation:
 
     def verification(self):
         maxsize = self.users_input * (self.detectedQP/ self.SAMPLE_SIZE) * self.totalCandidatePairs
-        Prediction_probs, retainedPairs = [], []
-        targetId, totalDecisions, positiveDecisions, truePositiveDecisions = 0, 0, 0, 0
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
-
+        self.topKPairs = PriorityQueue(self.budget + 1)
+        minimumWeight = -1
+        targetId, positiveDecisions, truePositiveDecisions = 0, 0, 0
+        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
         for targetGeom in targetData:
-          candidateMatches = self.getCandidates(targetId,  targetGeom)
-
-          for candidateMatchId in candidateMatches:
-
-              if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
-                if (candidateMatchId, targetId) in self.verifiedPairs:
-                  continue
-                totalDecisions += 1
-                currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
-                prediction = self.classifier.predict(np.array([currentInstance]))
-             #   if prediction == [1]:
-                if float(self.classifier.predict_proba(np.array([currentInstance]))[0,0]) > float(self.classifier.predict_proba(np.array([currentInstance]))[0,1]):
-                    positiveDecisions += 1
-                    weight = float(self.classifier.predict_proba(np.array([currentInstance]))[0,0])
-                    retainedPairs.append((weight, candidateMatchId, targetId, targetGeom))
+          candidates = self.getCandidates(targetId,targetGeom)
+          for candidateMatchId in candidates:
+                    if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
+                        currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
+                        weight = float(self.classifier.predict_proba(np.array([currentInstance]))[0,0])
+                        #insert into priority queue with size K=maxVerifications
+                        #the priority queue stores the pairs in decreasing weight
+                        if (minimumWeight <= weight):
+                          self.topKPairs.put((weight, candidateMatchId, targetId, targetGeom))
+                          if (self.budget < self.topKPairs.qsize()):
+                              minimumWeight = self.topKPairs.get()[0]
           targetId += 1
 
-        # Sort the list of tuples based on the first value of each tuple
-        retainedPairs = sorted(retainedPairs, key=lambda x: x[0], reverse=True)
-
-        counter = len(self.verifiedPairs)
-        print("Positive Decisions\t:\t" + str(positiveDecisions))
-        print("Total Decisions\t:\t" + str(totalDecisions))
-        for weight, sourceId, targetId, targetGeom in retainedPairs:
-          counter += 1
-          isRelated = self.relations.verifyRelations(sourceId, targetId, self.sourceData[sourceId], targetGeom)
-          if isRelated:
+        #verify the K pairs in the priority queue
+        counter = 0
+        while(not self.topKPairs.empty()):
+            counter += 1
+            weight, source_id, target_id, tEntity = self.topKPairs.get()
+            if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom):
               truePositiveDecisions += 1
-          if (maxsize == counter or self.budget == counter):
-            break
+            if (maxsize == counter):
+              break
         print("True Positive Decisions\t:\t" + str(truePositiveDecisions))
