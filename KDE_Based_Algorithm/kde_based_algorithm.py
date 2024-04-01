@@ -109,10 +109,7 @@ class KDE_Based_Algorithm:
             if s.length < self.minFeatures[8]:
                 self.minFeatures[8] = s.length
 
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
-
-        max_candidate_pairs = self.datasetDelimiter * len(targetData)
-        selected_pairs = set(random.sample(range(0, max_candidate_pairs), self.SAMPLE_SIZE))
+        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
         targetGeomId, pairId = 0, 0
         for targetGeom in targetData:
@@ -171,7 +168,7 @@ class KDE_Based_Algorithm:
 
                   if self.frequency[candidateMatchId] < self.minFeatures[5]:
                       self.minFeatures[5] = self.frequency[candidateMatchId]
-                  
+
                   #Create sample for training
                   if len(self.sample) < self.SAMPLE_SIZE:
                         self.random_number = random.randint(0, 10)
@@ -371,7 +368,7 @@ class KDE_Based_Algorithm:
         Prediction_probs, retainedPairs = [], []
         targetId, totalDecisions, positiveDecisions, truePositiveDecisions = 0, 0, 0, 0
         counter = 0
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
+        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
         for candidateMatchId, targetGeomId, targetGeom in self.sample_for_verification:
           candidateMatches = self.getCandidates(targetGeomId,  targetGeom)
 
@@ -391,7 +388,7 @@ class KDE_Based_Algorithm:
 
         Prediction_probs = pd.DataFrame({'0': Prediction_probs})
         Prediction_probs = Prediction_probs['0']
-        print(Prediction_probs)
+        #print(Prediction_probs)
         kde_model2 = self.get_best_model(Prediction_probs)
         self.find_estimate_threshold(kde_model2)
 
@@ -406,10 +403,10 @@ class KDE_Based_Algorithm:
 
                 totalDecisions += 1
                 currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
-                prediction = self.classifier.predict(np.array([currentInstance]))
-                prediction_probability = self.classifier.predict_proba(np.array([currentInstance]))[0, 0]
+               # prediction = self.classifier.predict(np.array([currentInstance]))
+               # prediction_probability = self.classifier.predict_proba(np.array([currentInstance]))[0, 0]
 
-                if float(prediction_probability) >= self.minimum_probability_threshold:
+                if float(self.classifier.predict_proba(np.array([currentInstance]))[0,0]) >= self.minimum_probability_threshold:
                     self.qualifying_distance_vector = 0
                     counter = counter + 1
                     if (self.budget == counter):
