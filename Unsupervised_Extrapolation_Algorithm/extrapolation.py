@@ -145,9 +145,9 @@ class Extrapolation:
           candidates = self.getCandidates(targetId,targetGeom)
           for candidateMatchId in candidates:
                     if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
-                        self.totalCandidatePairs += 1                               
+                        self.totalCandidatePairs += 1
 
-                        #Create sample
+                        #Create sample for Training
                         if len(self.sample) < self.SAMPLE_SIZE:
                               self.random_number = random.randint(0, 15)
                               if self.random_number == 0:
@@ -186,13 +186,19 @@ class Extrapolation:
 
     def verification(self):
         counter = 0
+        print("self.users_input: ", self.users_input)
+        print("self.detectedQP: ", self.detectedQP)
+        print("self.SAMPLE_SIZE: ", self.SAMPLE_SIZE)
+        print("self.totalCandidatePairs: ", self.totalCandidatePairs)
         maxsize = self.users_input * (self.detectedQP/ self.SAMPLE_SIZE) * self.totalCandidatePairs
+        print("maxsize: ", maxsize)
         while(not self.topKPairs.empty()):
             counter += 1
             weight, source_id, target_id, tEntity = self.topKPairs.get()
             self.relations.verifyRelations(source_id, target_id, self.sourceData[source_id], tEntity)
-            if (maxsize == counter):
-              break
+            if (math.floor(maxsize) == counter):
+              #break
+              return
         #print("counter is", counter)
 
 
