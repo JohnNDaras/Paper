@@ -20,7 +20,7 @@ class Extrapolation:
         self.users_input = users_input
         self.CLASS_SIZE = 500
         self.NO_OF_FEATURES = 16
-        self.SAMPLE_SIZE = 1000
+        self.SAMPLE_SIZE = 2000
         self.POSITIVE_PAIR = 1
         self.NEGATIVE_PAIR = 0
         self.trainingPhase = False
@@ -394,6 +394,6 @@ class Extrapolation:
             weight, source_id, target_id, tEntity = self.topKPairs.get()
             if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom):
               truePositiveDecisions += 1
-            if (maxsize == counter):
+            if (math.floor(maxsize) == counter):
               break
         print("True Positive Decisions\t:\t" + str(truePositiveDecisions))
