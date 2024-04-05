@@ -113,7 +113,7 @@ class Extrapolation:
             if s.length < self.minFeatures[8]:
                 self.minFeatures[8] = s.length
 
-        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
+        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
 
         targetGeomId, pairId = 0, 0
         for targetGeom in targetData:
@@ -173,7 +173,7 @@ class Extrapolation:
 
                   if self.frequency[candidateMatchId] < self.minFeatures[5]:
                       self.minFeatures[5] = self.frequency[candidateMatchId]
-         
+
                   #Create sample for training
                   if len(self.sample) < self.SAMPLE_SIZE:
                         self.random_number = random.randint(0, 10)
