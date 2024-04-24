@@ -5,11 +5,14 @@ import sys
 import time
 import pandas as pd
 from collections import defaultdict
-from sklearn.linear_model import LogisticRegression
 from shapely.geometry import LineString, MultiPolygon, Polygon
-from sklearn.neighbors import KernelDensity
-from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import LeaveOneOut
+
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.callbacks import EarlyStopping
 from utilities import CsvReader
 from datamodel import RelatedGeometries
 
@@ -19,7 +22,7 @@ class KDE_Based_Algorithm:
         self.users_input = users_input
         self.CLASS_SIZE = 500
         self.NO_OF_FEATURES = 16
-        self.SAMPLE_SIZE = 1000
+        self.SAMPLE_SIZE = 5000
         self.POSITIVE_PAIR = 1
         self.NEGATIVE_PAIR = 0
         self.trainingPhase = False
@@ -267,55 +270,76 @@ class KDE_Based_Algorithm:
     def validCandidate(self, candidateId, targetEnv):
         return self.sourceData[candidateId].envelope.intersects(targetEnv)
 
+
+    @staticmethod
+    def create_model(input_dim):
+        model = Sequential([
+            Dense(128, activation='relu', input_shape=(input_dim,), kernel_regularizer=l2(0.01)),
+            Dropout(0.3),
+            BatchNormalization(),
+            Dense(64, activation='relu', kernel_regularizer=l2(0.01)),
+            Dropout(0.5),
+            Dense(1, activation='sigmoid')
+        ])
+        return model
+
     def trainModel(self):
-        self.trainingPhase = True
+      self.trainingPhase = True
+      random.shuffle(self.sample)
 
-        random.shuffle(self.sample)
-        #print(self.sample)
-        negativeClassFull, positiveClassFull = False, False
-        negativePairs, positivePairs = [], []
-        excessVerifications = 0
-        for sourceId, targetId, targetGeom in self.sample:
-            if negativeClassFull and positiveClassFull:
-                break
+      negativeClassFull, positiveClassFull = False, False
+      negativePairs, positivePairs = [], []
+      excessVerifications = 0
 
-            isRelated = self.relations.verifyRelations(sourceId, targetId, self.sourceData[sourceId], targetGeom)
-            self.verifiedPairs.add((sourceId, targetId))
-            #print(self.verifiedPairs)
+      for sourceId, targetId, targetGeom in self.sample:
+          if negativeClassFull and positiveClassFull:
+              break
 
-            if isRelated:
-                if len(positivePairs) < self.CLASS_SIZE:
-                    positivePairs.append((sourceId, targetId, targetGeom))
-                else:
-                    excessVerifications += 1
-                    positiveClassFull = True
-            else:
-                if len(negativePairs) < self.CLASS_SIZE:
-                    negativePairs.append((sourceId, targetId, targetGeom))
-                else:
-                    excessVerifications += 1
-                    negativeClassFull = True
+          isRelated = self.relations.verifyRelations(sourceId, targetId, self.sourceData[sourceId], targetGeom)
+          self.verifiedPairs.add((sourceId, targetId))
 
-        print("Excess verifications\t:\t", excessVerifications)
-        print("Labelled negative instances\t:\t", len(negativePairs))
-        print("Labelled positive instances\t:\t", len(positivePairs))
+          if isRelated:
+                  if len(positivePairs) < self.CLASS_SIZE:
+                      positivePairs.append((sourceId, targetId, targetGeom))
+                  else:
+                      excessVerifications += 1
+                      positiveClassFull = True
+          else:
+                  if len(negativePairs) < self.CLASS_SIZE:
+                      negativePairs.append((sourceId, targetId, targetGeom))
+                  else:
+                      excessVerifications += 1
+                      negativeClassFull = True
 
-        X, y = [], []
-        for sourceId, targetId, targetGeom in negativePairs:
-            X.append(self.get_feature_vector(sourceId, targetId, targetGeom))
-            y.append(self.NEGATIVE_PAIR)
-        for sourceId, targetId, targetGeom in positivePairs:
-            X.append(self.get_feature_vector(sourceId, targetId, targetGeom))
-            y.append(self.POSITIVE_PAIR)
+      # Prepare data for the neural network
+      X, y = [], []
+      for pair in negativePairs + positivePairs:
+          sourceId, targetId, targetGeom = pair
+          X.append(self.get_feature_vector(sourceId, targetId, targetGeom))
+          y.append(1 if pair in positivePairs else 0)
 
-        X = np.array(X)
-        y = np.array(y)
-        if len(negativePairs) == 0 or len(positivePairs) == 0:
-            raise ValueError("Both negative and positive instances must be labelled.")
-        else:
-            self.classifier = LogisticRegression(max_iter=1000)
-            self.classifier.fit(X, y)
-        self.trainingPhase = False
+      X = np.array(X)
+      y = np.array(y)
+
+      if len(negativePairs) == 0 or len(positivePairs) == 0:
+          raise ValueError("Both negative and positive instances must be labelled.")
+
+      # Create and compile the neural network model
+      model = KDE_Based_Algorithm.create_model(X.shape[1])
+      model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+
+      # Train the model
+      model.fit(X, y, epochs=30, batch_size=32, validation_split=0.1, verbose=0, callbacks=[EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)])
+
+      self.classifier = model  # Store the trained model
+      self.trainingPhase = False
+
+
+
+
+
+
+
 
     def get_feature_vector(self, sourceId, targetId, targetGeom):
         featureVector = [0] * (self.NO_OF_FEATURES)
@@ -366,10 +390,17 @@ class KDE_Based_Algorithm:
 
     def verification(self):
         Prediction_probs, retainedPairs = [], []
+        instances = []
+        validcandidates = []
         targetId, totalDecisions, positiveDecisions, truePositiveDecisions = 0, 0, 0, 0
         counter = 0
+        self.relations.reset()
         targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
         for candidateMatchId, targetGeomId, targetGeom in self.sample_for_verification:
+
+          if positiveDecisions == 1000:
+            break
+
           candidateMatches = self.getCandidates(targetGeomId,  targetGeom)
 
           for candidateMatchId in candidateMatches:
@@ -381,11 +412,21 @@ class KDE_Based_Algorithm:
                 currentInstance = self.get_feature_vector(candidateMatchId, targetGeomId, targetGeom)
                 isRelated = self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom)
                 if isRelated:
-                    prediction = self.classifier.predict(np.array([currentInstance]))
                     positiveDecisions += 1
-                    Prediction_probs.append(float(self.classifier.predict_proba(np.array([currentInstance]))[0, 0]))
+                    instances.append((currentInstance, candidateMatchId, targetGeomId, targetGeom))
 
 
+        # Batch predict
+        if instances:
+            features, indices = zip(*[(instance[0], instance[1:]) for instance in instances])
+            features = np.array(features)
+            predictions = self.classifier.predict(features)
+            for pred, idx in zip(predictions, indices):
+                weight = float(pred[0])
+                Prediction_probs.append(weight)
+
+
+        self.relations.reset()
         Prediction_probs = pd.DataFrame({'0': Prediction_probs})
         Prediction_probs = Prediction_probs['0']
         #print(Prediction_probs)
@@ -393,28 +434,34 @@ class KDE_Based_Algorithm:
         self.find_estimate_threshold(kde_model2)
 
 
+
         for targetGeom in targetData:
-          candidateMatches = self.getCandidates(targetId,  targetGeom)
+            candidates = self.getCandidates(targetId, targetGeom)
+            for candidateMatchId in candidates:
+                if self.validCandidate(candidateMatchId, targetGeom.envelope):
+                    currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
+                    validcandidates.append((currentInstance, candidateMatchId, targetId, targetGeom))
+            targetId += 1
 
-          for candidateMatchId in candidateMatches:
-              if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
-                if (candidateMatchId, targetId) in self.verifiedPairs:
-                  continue
+        # Batch predict
+        if validcandidates:
+            features, indices = zip(*[(instance[0], instance[1:]) for instance in validcandidates])
+            features = np.array(features)
+            predictions = self.classifier.predict(features)
+            for pred, idx in zip(predictions, indices):
+                weight = float(pred[0])
+                if weight >= self.minimum_probability_threshold:
+                    retainedPairs.append((weight, idx))
 
-                totalDecisions += 1
-                currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
-               # prediction = self.classifier.predict(np.array([currentInstance]))
-               # prediction_probability = self.classifier.predict_proba(np.array([currentInstance]))[0, 0]
+        for weight, (candidateMatchId, targetId, targetGeom) in retainedPairs:
+            counter += 1
+            if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom):
+                truePositiveDecisions += 1
+            if (self.budget == counter):
+                break
 
-                if float(self.classifier.predict_proba(np.array([currentInstance]))[0,0]) >= self.minimum_probability_threshold:
-                    self.qualifying_distance_vector = 0
-                    counter = counter + 1
-                    if (self.budget == counter):
-                      break
-                    if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom):
-                      truePositiveDecisions += 1
-          targetId += 1
         print("True Positive Decisions\t:\t" + str(truePositiveDecisions))
+
 
 
 
