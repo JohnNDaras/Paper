@@ -120,7 +120,7 @@ class Heuristics_Algorithm:
         trgCenter = tEntity.envelope.centroid
         distance = srcCenter.distance(trgCenter)
         # Normalize or scale the distance as needed
-        return 1 / (1 + distance)  # Example: inverse distance weighting
+        return 1 / (1 + distance)  # inverse distance weighting
 
 
 
