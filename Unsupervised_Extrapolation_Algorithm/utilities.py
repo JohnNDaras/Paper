@@ -37,5 +37,4 @@ class CsvReader:
                     geoCollections += 1
                 else:
                     loadedEntities.append(geometry)
-
         return loadedEntities
