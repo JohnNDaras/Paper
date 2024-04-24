@@ -1,6 +1,6 @@
 from shapely import relate
 from shapely import Point, LineString, Polygon
-#from de9im_patterns import contains, crosses_lines, crosses_1, crosses_2, disjoint, equal, intersects, overlaps1, overlaps2, touches, within, covered_by, covers
+from de9im_patterns import contains, crosses_lines, crosses_1, crosses_2, disjoint, equal, intersects, overlaps1, overlaps2, touches, within, covered_by, covers
 
 class RelatedGeometries :
         def __init__(self, qualifyingPairs) :
