@@ -1,5 +1,6 @@
 from shapely import relate
-from de9im_patterns import contains, crosses_lines, crosses_1, crosses_2, disjoint, equal, intersects, overlaps1, overlaps2, touches, within, covered_by, covers
+from shapely import Point, LineString, Polygon
+#from de9im_patterns import contains, crosses_lines, crosses_1, crosses_2, disjoint, equal, intersects, overlaps1, overlaps2, touches, within, covered_by, covers
 
 class RelatedGeometries :
         def __init__(self, qualifyingPairs) :
@@ -81,6 +82,33 @@ class RelatedGeometries :
         def  getVerifiedPairs(self) :
             return self.verifiedPairs
 
+        def reset(self):
+            self.pgr = 0
+            self.exceptions = 0
+            self.detectedLinks = 0
+            self.verifiedPairs = 0
+            self.interlinkedGeometries = 0
+
+            self.containsD1.clear()
+            self.containsD2.clear()
+            self.coveredByD1.clear()
+            self.coveredByD2.clear()
+            self.coversD1.clear()
+            self.coversD2.clear()
+            self.crossesD1.clear()
+            self.crossesD2.clear()
+            self.equalsD1.clear()
+            self.equalsD2.clear()
+            self.intersectsD1.clear()
+            self.intersectsD2.clear()
+            self.overlapsD1.clear()
+            self.overlapsD2.clear()
+            self.touchesD1.clear()
+            self.touchesD2.clear()
+            self.withinD1.clear()
+            self.withinD2.clear()
+
+
         def print(self) :
             print("Qualifying pairs:\t", str(self.qualifyingPairs))
             print("Exceptions:\t", str(self.exceptions))
@@ -110,6 +138,8 @@ class RelatedGeometries :
               print('array is empty 3')
             print("Verified pairs", str(self.verifiedPairs))
 
+
+
         def Precision_Threshold(self, ConditionLimit):
           if self.verifiedPairs != 0:
               Precision = self.interlinkedGeometries / float(self.verifiedPairs)
@@ -128,6 +158,22 @@ class RelatedGeometries :
             return 1
 
 
+
+        # Function to determine the dimension based on geometry type
+        def get_dimension(self,geometry):
+            if isinstance(geometry, Point) or geometry.geom_type == 'Point' or geometry.geom_type == 'MultiPoint':
+                return 0
+            elif isinstance(geometry, LineString) or geometry.geom_type == 'LineString' or geometry.geom_type == 'LinearRing' or geometry.geom_type == 'MultiLineString':
+                return 1
+            elif isinstance(geometry, Polygon) or geometry.geom_type == 'Polygon' or geometry.geom_type == 'MultiPolygon':
+                return 2
+            else:
+                return None
+
+        # Check if two geometries have the same dimension
+        def have_same_dimension(self,geom1, geom2):
+            return self.get_dimension(geom1) == self.get_dimension(geom2)
+
         def  verifyRelations(self, geomId1,  geomId2,  sourceGeom,  targetGeom, heuristicCondition, ConditionLimit, Dynamic_Factor, violation_limit) :
             related = False
             self.verifiedPairs += 1
@@ -145,14 +191,27 @@ class RelatedGeometries :
                 related = True
                 self.detectedLinks += 1
                 self.addCoveredBy(geomId1, geomId2)
-            if crosses_lines.matches(array) or crosses_1.matches(array) or crosses_2.matches(array):
+            if self.get_dimension(sourceGeom) == self.get_dimension(targetGeom) ==1:
+              if crosses_lines.matches(array):
                 related = True
                 self.detectedLinks += 1
                 self.addCrosses(geomId1, geomId2)
-            if overlaps1.matches(array) or overlaps2.matches(array):
+            elif self.get_dimension(sourceGeom) > self.get_dimension(targetGeom) :
+              if crosses_2.matches(array):
                 related = True
                 self.detectedLinks += 1
-                self.addOverlaps(geomId1, geomId2)
+                self.addCrosses(geomId1, geomId2)
+            elif self.get_dimension(sourceGeom) < self.get_dimension(targetGeom) :
+              if crosses_1.matches(array):
+                related = True
+                self.detectedLinks += 1
+                self.addCrosses(geomId1, geomId2)
+            if self.have_same_dimension(sourceGeom, targetGeom):
+              if overlaps1.matches(array) or overlaps2.matches(array):
+                  related = True
+                  self.detectedLinks += 1
+                  print(sourceGeom,"  ",targetGeom)
+                  self.addOverlaps(geomId1, geomId2)
             if  equal.matches(array):
                 related = True
                 self.detectedLinks += 1
@@ -176,6 +235,7 @@ class RelatedGeometries :
                 self.continuous_unrelated_Pairs = 0
             else:
                 self.continuous_unrelated_Pairs += 1
+
 
             if violation_limit == 0:
               if heuristicCondition == "Precision_Threshold":
