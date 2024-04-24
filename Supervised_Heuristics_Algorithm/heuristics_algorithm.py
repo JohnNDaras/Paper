@@ -10,7 +10,15 @@ from shapely.geometry import LineString, MultiPolygon, Polygon
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import LeaveOneOut
-from queue import PriorityQueue
+from sortedcontainers import SortedList
+
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.callbacks import EarlyStopping
+
 from utilities import CsvReader
 from datamodel import RelatedGeometries
 
@@ -23,10 +31,12 @@ class Heuristics_Algorithm:
         self.violation_limit = ViolationLimit
         self.CLASS_SIZE = 500
         self.NO_OF_FEATURES = 16
-        self.SAMPLE_SIZE = 1000
+        self.SAMPLE_SIZE = 2000
         self.POSITIVE_PAIR = 1
         self.NEGATIVE_PAIR = 0
         self.trainingPhase = False
+        self.detectedQP = 0
+        self.totalCandidatePairs = 0
 
         self.budget = budget
         self.delimiter = delimiter
@@ -37,11 +47,13 @@ class Heuristics_Algorithm:
         self.datasetDelimiter = len(self.sourceData)
         self.relations = RelatedGeometries(qPairs)
         self.sample = []
+        self.sample_for_verification = []
         self.spatialIndex = defaultdict(lambda: defaultdict(list))
         self.verifiedPairs = set()
         self.minimum_probability_threshold = 0
         self.thetaX = -1
         self.thetaY = -1
+        self.N = 0
 
     def applyProcessing(self) :
       time1 = int(time.time() * 1000)
@@ -85,7 +97,7 @@ class Heuristics_Algorithm:
         self.totalCooccurrences =  [0] * len(self.sourceData)
         self.maxFeatures = [-sys.float_info.max] * self.NO_OF_FEATURES
         self.minFeatures = [sys.float_info.max] * self.NO_OF_FEATURES
-        self.totalCandidatePairs = 0
+        #self.totalCandidatePairs = 0
         for s in self.sourceData:
             if self.maxFeatures[0] < s.envelope.area:
                 self.maxFeatures[0] = s.envelope.area
@@ -113,7 +125,7 @@ class Heuristics_Algorithm:
             if s.length < self.minFeatures[8]:
                 self.minFeatures[8] = s.length
 
-        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
+        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
 
         targetGeomId, pairId = 0, 0
         for targetGeom in targetData:
@@ -173,12 +185,13 @@ class Heuristics_Algorithm:
 
                   if self.frequency[candidateMatchId] < self.minFeatures[5]:
                       self.minFeatures[5] = self.frequency[candidateMatchId]
-                  
+
                   #Create sample for training
                   if len(self.sample) < self.SAMPLE_SIZE:
                         self.random_number = random.randint(0, 10)
                         if self.random_number == 0:
                           self.sample.append((candidateMatchId, targetGeomId, targetGeom))
+
 
                   pairId += 1
 
@@ -267,67 +280,80 @@ class Heuristics_Algorithm:
     def validCandidate(self, candidateId, targetEnv):
         return self.sourceData[candidateId].envelope.intersects(targetEnv)
 
+    @staticmethod
+    def create_model(input_dim):
+        model = Sequential([
+            Dense(128, activation='relu', input_shape=(input_dim,), kernel_regularizer=l2(0.01)),
+            Dropout(0.5),
+            BatchNormalization(),
+            Dense(64, activation='relu', kernel_regularizer=l2(0.01)),
+            Dropout(0.5),
+            Dense(1, activation='sigmoid')
+        ])
+        return model
+
     def trainModel(self):
-        self.trainingPhase = True
+      self.trainingPhase = True
+      random.shuffle(self.sample)
 
-        random.shuffle(self.sample)
-        #print(self.sample)
-        negativeClassFull, positiveClassFull = False, False
-        negativePairs, positivePairs = [], []
-        excessVerifications = 0
-        for sourceId, targetId, targetGeom in self.sample:
-            if negativeClassFull and positiveClassFull:
-                break
+      negativeClassFull, positiveClassFull = False, False
+      negativePairs, positivePairs = [], []
+      excessVerifications = 0
 
-            isRelated = self.relations.verifyRelations(sourceId, targetId, self.sourceData[sourceId], targetGeom, None, None, 0, 0 )
-            self.verifiedPairs.add((sourceId, targetId))
-            #print(self.verifiedPairs)
+      for sourceId, targetId, targetGeom in self.sample:
+          if negativeClassFull and positiveClassFull:
+              break
 
-            if isRelated:
+          isRelated = self.relations.verifyRelations(sourceId, targetId, self.sourceData[sourceId], targetGeom, None, None, 0, 0 )
+          self.verifiedPairs.add((sourceId, targetId))
+
+          if isRelated:
                 if len(positivePairs) < self.CLASS_SIZE:
                     positivePairs.append((sourceId, targetId, targetGeom))
                 else:
                     excessVerifications += 1
                     positiveClassFull = True
-            else:
+          else:
                 if len(negativePairs) < self.CLASS_SIZE:
                     negativePairs.append((sourceId, targetId, targetGeom))
                 else:
                     excessVerifications += 1
                     negativeClassFull = True
 
-        print("Excess verifications\t:\t", excessVerifications)
-        print("Labelled negative instances\t:\t", len(negativePairs))
-        print("Labelled positive instances\t:\t", len(positivePairs))
+      # Prepare data for the neural network
+      X, y = [], []
+      for pair in negativePairs + positivePairs:
+          sourceId, targetId, targetGeom = pair
+          X.append(self.get_feature_vector(sourceId, targetId, targetGeom))
+          y.append(1 if pair in positivePairs else 0)
 
-        X, y = [], []
-        for sourceId, targetId, targetGeom in negativePairs:
-            X.append(self.get_feature_vector(sourceId, targetId, targetGeom))
-            y.append(self.NEGATIVE_PAIR)
-        for sourceId, targetId, targetGeom in positivePairs:
-            X.append(self.get_feature_vector(sourceId, targetId, targetGeom))
-            y.append(self.POSITIVE_PAIR)
+      X = np.array(X)
+      y = np.array(y)
 
-        X = np.array(X)
-        y = np.array(y)
-        if len(negativePairs) == 0 or len(positivePairs) == 0:
-            raise ValueError("Both negative and positive instances must be labelled.")
-        else:
-            self.classifier = LogisticRegression(max_iter=1000)
-            self.classifier.fit(X, y)
-        self.trainingPhase = False
+      if len(negativePairs) == 0 or len(positivePairs) == 0:
+          raise ValueError("Both negative and positive instances must be labelled.")
+
+      # Create and compile the neural network model
+      model = Heuristics_Algorithm.create_model(X.shape[1])
+      model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+
+      # Train the model
+      model.fit(X, y, epochs=10, batch_size=32, validation_split=0.1, verbose=0, callbacks=[EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)])
+
+      self.classifier = model  # Store the trained model
+      self.trainingPhase = False
 
 
     def get_feature_vector(self, sourceId, targetId, targetGeom):
         featureVector = [0] * (self.NO_OF_FEATURES)
 
-        if(self.trainingPhase == 1):
-          candidateMatches = self.getCandidates(targetId, targetGeom)
-          for candidateMatchId in candidateMatches:
-            featureVector[13] += self.frequency[candidateMatchId]
-            featureVector[14]+=1
-            if (self.validCandidate(candidateMatchId, targetGeom.envelope)): # intersecting MBRs
-                  featureVector[15]+=1
+        #if(self.trainingPhase == 1):
+        candidateMatches = self.getCandidates(targetId, targetGeom)
+        for candidateMatchId in candidateMatches:
+          featureVector[13] += self.frequency[candidateMatchId]
+          featureVector[14]+=1
+          if (self.validCandidate(candidateMatchId, targetGeom.envelope)): # intersecting MBRs
+              featureVector[15]+=1
 
         mbrIntersection = self.sourceData[sourceId].envelope.intersection(targetGeom.envelope)
 
@@ -358,6 +384,8 @@ class Heuristics_Algorithm:
 
         return featureVector
 
+
+
     def getNoOfBlocks(self, envelope) :
       maxX = math.ceil(envelope[2] / self.thetaX)
       maxY = math.ceil(envelope[3] / self.thetaY)
@@ -365,32 +393,41 @@ class Heuristics_Algorithm:
       minY = math.floor(envelope[1] / self.thetaY)
       return (maxX - minX + 1) * (maxY - minY + 1)
 
-    def verification(self):
-        self.topKPairs = PriorityQueue(self.budget + 1)
-        minimumWeight = -1
-        targetId, totalDecisions, positiveDecisions, truePositiveDecisions = 0, 0, 0, 0
-        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
-        for targetGeom in targetData:
-          candidates = self.getCandidates(targetId,targetGeom)
-          for candidateMatchId in candidates:
-                    if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
-                        currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
-                        weight = float(self.classifier.predict_proba(np.array([currentInstance]))[0,0])
-                        #insert into priority queu with size K=maxVerifications
-                        #the priority queue stores the pairs in decreasing weight
-                        if (minimumWeight <= weight):
-                          self.topKPairs.put((weight, candidateMatchId, targetId, targetGeom))
-                          if (self.budget < self.topKPairs.qsize()):
-                              minimumWeight = self.topKPairs.get()[0]
-          targetId += 1
 
-        #verify the K pairs in the priority queue
+    def verification(self):
+        sorted_list = SortedList()
+        targetId, truePositiveDecisions = 0, 0
+        minimumWeightThreshold = 0.3
+        instances = []
+        self.relations.reset()
         counter = 0
-        while(not self.topKPairs.empty()):
+
+        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
+
+        for targetGeom in targetData:
+            candidates = self.getCandidates(targetId, targetGeom)
+            for candidateMatchId in candidates:
+                if self.validCandidate(candidateMatchId, targetGeom.envelope):
+                    currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
+                    instances.append((currentInstance, candidateMatchId, targetId, targetGeom))
+            targetId += 1
+
+        # Batch predict
+        if instances:
+            features, indices = zip(*[(instance[0], instance[1:]) for instance in instances])
+            features = np.array(features)
+            predictions = self.classifier.predict(features)
+            for pred, idx in zip(predictions, indices):
+                weight = float(pred[0])
+                if weight >= minimumWeightThreshold:
+                    sorted_list.add((weight, idx))
+
+        # Sort and process the list
+        while sorted_list and len(sorted_list) > self.budget:
+            sorted_list.pop(0)  # Maintain budget
+
+        for weight, (candidateMatchId, targetId, targetGeom) in sorted_list:
             counter += 1
-            weight, source_id, target_id, tEntity = self.topKPairs.get()
             if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom, self.heuristicCondition, self.condition_limit , self.dynamic_factor, self.violation_limit) == 2:
               print("finish the program and return")
               return
-            if (self.budget == counter):
-              break
