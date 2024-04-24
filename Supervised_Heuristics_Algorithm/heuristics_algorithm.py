@@ -5,11 +5,7 @@ import sys
 import time
 import pandas as pd
 from collections import defaultdict
-from sklearn.linear_model import LogisticRegression
 from shapely.geometry import LineString, MultiPolygon, Polygon
-from sklearn.neighbors import KernelDensity
-from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import LeaveOneOut
 from sortedcontainers import SortedList
 
 import tensorflow as tf
