@@ -5,7 +5,11 @@ import sys
 import time
 import pandas as pd
 from collections import defaultdict
+from sklearn.linear_model import LogisticRegression
 from shapely.geometry import LineString, MultiPolygon, Polygon
+from sklearn.neighbors import KernelDensity
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import LeaveOneOut
 from sortedcontainers import SortedList
 
 import tensorflow as tf
@@ -15,8 +19,8 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.callbacks import EarlyStopping
 
-from utilities import CsvReader
-from datamodel import RelatedGeometries
+#from utilities import CsvReader
+#from datamodel import RelatedGeometries
 
 class Extrapolation:
 
@@ -314,6 +318,9 @@ class Extrapolation:
                     excessVerifications += 1
                     negativeClassFull = True
       self.N = len(positivePairs) + len(negativePairs) + excessVerifications
+      print("Excess verifications\t:\t", excessVerifications)
+      print("Labelled negative instances\t:\t", len(negativePairs))
+      print("Labelled positive instances\t:\t", len(positivePairs))
 
       # Prepare data for the neural network
       X, y = [], []
