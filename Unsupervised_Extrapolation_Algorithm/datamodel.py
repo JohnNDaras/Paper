@@ -190,7 +190,7 @@ class RelatedGeometries :
               if overlaps1.matches(array) or overlaps2.matches(array):
                   related = True
                   self.detectedLinks += 1
-                  print(sourceGeom,"  ",targetGeom)
+                  #print(sourceGeom,"  ",targetGeom)
                   self.addOverlaps(geomId1, geomId2)
             if  equal.matches(array):
                 related = True
