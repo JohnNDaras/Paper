@@ -3,8 +3,8 @@ import random
 import time
 from collections import defaultdict
 from sortedcontainers import SortedList
-#from utilities import CsvReader
-#from datamodel import RelatedGeometries
+from utilities import CsvReader
+from datamodel import RelatedGeometries
 
 # Constants for the application
 MINIMUM_WEIGHT = 0.0
