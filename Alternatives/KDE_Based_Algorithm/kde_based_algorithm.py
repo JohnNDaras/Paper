@@ -518,7 +518,7 @@ class KDE_Based_Algorithm:
         grid = GridSearchCV(
             KernelDensity(),
             {'bandwidth': h_vals, 'kernel': kernels},
-            cv=GroupKFold(n_splits = number_of_splits),  # Using GroupKFold which is faster than LeaveOneOut
+            cv=GroupKFold(n_splits = number_of_splits),  # Using GroupKFold
             n_jobs=-1  # Utilize all available CPU cores for the grid search
         )
         grid.fit(np.expand_dims(x_train, axis=1), groups=groups)  # Fit model on the reshaped data
