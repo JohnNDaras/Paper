@@ -5,11 +5,18 @@ import sys
 import time
 import pandas as pd
 from collections import defaultdict
-from sklearn.linear_model import LogisticRegression
 from shapely.geometry import LineString, MultiPolygon, Polygon
 from sklearn.neighbors import KernelDensity
-from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import LeaveOneOut
+from sklearn.model_selection import GridSearchCV, KFold, GroupKFold
+import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
+
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.callbacks import EarlyStopping
 from utilities import CsvReader
 from datamodel import RelatedGeometries
 
@@ -19,14 +26,16 @@ class KDE_Based_Algorithm:
         self.users_input = users_input
         self.CLASS_SIZE = 500
         self.NO_OF_FEATURES = 16
-        self.SAMPLE_SIZE = 5000
+        self.SAMPLE_SIZE = 100000
         self.POSITIVE_PAIR = 1
         self.NEGATIVE_PAIR = 0
         self.trainingPhase = False
+        self.qPairs = qPairs
 
         self.budget = budget
         self.delimiter = delimiter
         self.sourceData = CsvReader.readAllEntities(delimiter, sourceFilePath)
+        self.targetData = []
         print('Source geometries', len(self.sourceData))
 
         self.targetFilePath = targetFilePath
@@ -109,10 +118,10 @@ class KDE_Based_Algorithm:
             if s.length < self.minFeatures[8]:
                 self.minFeatures[8] = s.length
 
-        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
+        self.targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
-        targetGeomId, pairId = 0, 0
-        for targetGeom in targetData:
+        targetGeomId, self.allCandidatePairs = 0, 0
+        for targetGeom in self.targetData:
             if self.maxFeatures[1] < targetGeom.envelope.area:
                 self.maxFeatures[1] = targetGeom.envelope.area
 
@@ -146,6 +155,7 @@ class KDE_Based_Algorithm:
             currentCooccurrences = 0
 
             for candidateMatchId in candidateMatches:
+              self.allCandidatePairs += 1
               self.distinctCooccurrences[candidateMatchId] += 1
               currentCooccurrences += self.frequency[candidateMatchId]
 
@@ -171,7 +181,7 @@ class KDE_Based_Algorithm:
 
                   #Create sample for training
                   if len(self.sample) < self.SAMPLE_SIZE:
-                        self.random_number = random.randint(0, 10)
+                        self.random_number = random.randint(0, 90)
                         if self.random_number == 0:
                           self.sample.append((candidateMatchId, targetGeomId, targetGeom))
 
@@ -180,7 +190,7 @@ class KDE_Based_Algorithm:
                         if self.random_number == 1:
                           self.sample_for_verification.append((candidateMatchId, targetGeomId, targetGeom))
 
-                  pairId += 1
+                  #self.allCandidatePairs += 1
 
             if self.maxFeatures[13] < currentCooccurrences:
                 self.maxFeatures[13] = currentCooccurrences
@@ -267,55 +277,76 @@ class KDE_Based_Algorithm:
     def validCandidate(self, candidateId, targetEnv):
         return self.sourceData[candidateId].envelope.intersects(targetEnv)
 
+
+    @staticmethod
+    def create_model(input_dim):
+        model = Sequential([
+            Dense(128, activation='relu', input_shape=(input_dim,), kernel_regularizer=l2(0.01)),
+            Dropout(0.3),
+            BatchNormalization(),
+            Dense(64, activation='relu', kernel_regularizer=l2(0.01)),
+            Dropout(0.5),
+            Dense(1, activation='sigmoid')
+        ])
+        return model
+
     def trainModel(self):
-        self.trainingPhase = True
+      self.trainingPhase = True
+      random.shuffle(self.sample)
 
-        random.shuffle(self.sample)
-        #print(self.sample)
-        negativeClassFull, positiveClassFull = False, False
-        negativePairs, positivePairs = [], []
-        excessVerifications = 0
-        for sourceId, targetId, targetGeom in self.sample:
-            if negativeClassFull and positiveClassFull:
-                break
+      negativeClassFull, positiveClassFull = False, False
+      negativePairs, positivePairs = [], []
+      excessVerifications = 0
 
-            isRelated = self.relations.verifyRelations(sourceId, targetId, self.sourceData[sourceId], targetGeom)
-            self.verifiedPairs.add((sourceId, targetId))
-            #print(self.verifiedPairs)
+      for sourceId, targetId, targetGeom in self.sample:
+          if negativeClassFull and positiveClassFull:
+              break
 
-            if isRelated:
+          isRelated = self.relations.verifyRelations(sourceId, targetId, self.sourceData[sourceId], targetGeom)
+          self.verifiedPairs.add((sourceId, targetId))
+
+          if isRelated:
                 if len(positivePairs) < self.CLASS_SIZE:
                     positivePairs.append((sourceId, targetId, targetGeom))
                 else:
                     excessVerifications += 1
                     positiveClassFull = True
-            else:
+          else:
                 if len(negativePairs) < self.CLASS_SIZE:
                     negativePairs.append((sourceId, targetId, targetGeom))
                 else:
                     excessVerifications += 1
                     negativeClassFull = True
 
-        print("Excess verifications\t:\t", excessVerifications)
-        print("Labelled negative instances\t:\t", len(negativePairs))
-        print("Labelled positive instances\t:\t", len(positivePairs))
+      # Prepare data for the neural network
+      X, y = [], []
+      for pair in negativePairs + positivePairs:
+          sourceId, targetId, targetGeom = pair
+          X.append(self.get_feature_vector(sourceId, targetId, targetGeom))
+          y.append(1 if pair in positivePairs else 0)
 
-        X, y = [], []
-        for sourceId, targetId, targetGeom in negativePairs:
-            X.append(self.get_feature_vector(sourceId, targetId, targetGeom))
-            y.append(self.NEGATIVE_PAIR)
-        for sourceId, targetId, targetGeom in positivePairs:
-            X.append(self.get_feature_vector(sourceId, targetId, targetGeom))
-            y.append(self.POSITIVE_PAIR)
+      X = np.array(X)
+      y = np.array(y)
 
-        X = np.array(X)
-        y = np.array(y)
-        if len(negativePairs) == 0 or len(positivePairs) == 0:
-            raise ValueError("Both negative and positive instances must be labelled.")
-        else:
-            self.classifier = LogisticRegression(max_iter=1000)
-            self.classifier.fit(X, y)
-        self.trainingPhase = False
+      if len(negativePairs) == 0 or len(positivePairs) == 0:
+          raise ValueError("Both negative and positive instances must be labelled.")
+
+      # Create and compile the neural network model
+      model = KDE_Based_Algorithm.create_model(X.shape[1])
+      model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+
+      # Train the model
+      model.fit(X, y, epochs=30, batch_size=32, validation_split=0.1, verbose=0, callbacks=[EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)])
+
+      self.classifier = model  # Store the trained model
+      self.trainingPhase = False
+
+
+
+
+
+
+
 
     def get_feature_vector(self, sourceId, targetId, targetGeom):
         featureVector = [0] * (self.NO_OF_FEATURES)
@@ -364,76 +395,135 @@ class KDE_Based_Algorithm:
       minY = math.floor(envelope[1] / self.thetaY)
       return (maxX - minX + 1) * (maxY - minY + 1)
 
+
+    def classify_geometry_pair(self,geometry_pair):
+        # Dictionary mapping pairs of geometry types to group numbers
+        geometry_pairs = {
+            (Point, Point): 1,
+            (Point, LineString): 2,
+            (Point, Polygon): 3,
+            (LineString, LineString): 4,
+            (LineString, Polygon): 5,
+            (Polygon, Polygon): 6,
+            (MultiPoint, MultiPoint): 7,
+            (MultiLineString, MultiLineString): 8,
+            (MultiPolygon, MultiPolygon): 9,
+            (MultiPoint, LineString): 10,
+            (MultiLineString, Polygon): 11,
+        }
+
+        # Unpack the tuple into the two geometry types
+        geom1, geom2 = type(geometry_pair[0]), type(geometry_pair[1])
+
+        # Check if the pair (in any order) exists in the dictionary
+        if (geom1, geom2) in geometry_pairs:
+            return geometry_pairs[(geom1, geom2)]
+        elif (geom2, geom1) in geometry_pairs:
+            return geometry_pairs[(geom2, geom1)]
+        else:
+            return None  # Return None or raise an error if the pair is not found
+
+
+
     def verification(self):
         Prediction_probs, retainedPairs = [], []
+        instances = []
+        validcandidates = []
+        self.groups_by_geometry_shape = []
         targetId, totalDecisions, positiveDecisions, truePositiveDecisions = 0, 0, 0, 0
         counter = 0
+        group_number = 0
         self.relations.reset()
-        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
         for candidateMatchId, targetGeomId, targetGeom in self.sample_for_verification:
-          candidateMatches = self.getCandidates(targetGeomId,  targetGeom)
 
-          for candidateMatchId in candidateMatches:
-
-              if positiveDecisions== 1000:
-                break
-                            
-              if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
-                if (candidateMatchId, targetGeomId) in self.verifiedPairs:
-                  continue
-
-                totalDecisions += 1
-                currentInstance = self.get_feature_vector(candidateMatchId, targetGeomId, targetGeom)
-                isRelated = self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom)
-                if isRelated:
-                    prediction = self.classifier.predict(np.array([currentInstance]))
-                    positiveDecisions += 1
-                    Prediction_probs.append(float(self.classifier.predict_proba(np.array([currentInstance]))[0, 0]))
+          if positiveDecisions == 15000:
+            break
+          currentInstance = self.get_feature_vector(candidateMatchId, targetGeomId, targetGeom)
+          isRelated = self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom)
+          if isRelated:
+              positiveDecisions += 1
+              instances.append((currentInstance, candidateMatchId, targetGeomId, targetGeom))
 
 
+
+        # Batch predict
+        if instances:
+            features, indices = zip(*[(instance[0], instance[1:]) for instance in instances])
+            features = np.array(features)
+            predictions = self.classifier.predict(features)
+
+
+
+            for pred, idx in zip(predictions, indices):
+                weight = float(pred[0])
+                Prediction_probs.append(weight)
+                group_number = self.classify_geometry_pair((self.sourceData[idx[0]], idx[2]))
+                #print(type(self.sourceData[idx[0]]), type(idx[2]),group_number)
+                self.groups_by_geometry_shape.append(group_number)
+
+
+        self.relations.reset()
         Prediction_probs = pd.DataFrame({'0': Prediction_probs})
         Prediction_probs = Prediction_probs['0']
-        #print(Prediction_probs)
         kde_model2 = self.get_best_model(Prediction_probs)
         self.find_estimate_threshold(kde_model2)
 
 
-        for targetGeom in targetData:
-          candidateMatches = self.getCandidates(targetId,  targetGeom)
 
-          for candidateMatchId in candidateMatches:
-              if (self.validCandidate(candidateMatchId, targetGeom.envelope)):
-                if (candidateMatchId, targetId) in self.verifiedPairs:
-                  continue
+        for targetGeom in self.targetData:
+            candidates = self.getCandidates(targetId, targetGeom)
+            for candidateMatchId in candidates:
+                if self.validCandidate(candidateMatchId, targetGeom.envelope):
+                    currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
+                    validcandidates.append((currentInstance, candidateMatchId, targetId, targetGeom))
+            targetId += 1
 
-                totalDecisions += 1
-                currentInstance = self.get_feature_vector(candidateMatchId, targetId, targetGeom)
-               # prediction = self.classifier.predict(np.array([currentInstance]))
-               # prediction_probability = self.classifier.predict_proba(np.array([currentInstance]))[0, 0]
+        self.targetData.clear()
+        # Batch predict
+        if validcandidates:
+            features, indices = zip(*[(instance[0], instance[1:]) for instance in validcandidates])
+            features = np.array(features)
+            predictions = self.classifier.predict(features)
+            for pred, idx in zip(predictions, indices):
+                weight = float(pred[0])
+                if weight >= self.minimum_probability_threshold:
+                    retainedPairs.append((weight, idx))
 
-                if float(self.classifier.predict_proba(np.array([currentInstance]))[0,0]) >= self.minimum_probability_threshold:
-                    self.qualifying_distance_vector = 0
-                    counter = counter + 1
-                    if (self.budget == counter):
-                      break
-                    if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom):
-                      truePositiveDecisions += 1
-          targetId += 1
+        for weight, (candidateMatchId, targetId, targetGeom) in retainedPairs:
+            counter += 1
+            if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom):
+                truePositiveDecisions += 1
+            if (self.budget == counter):
+                break
+
         print("True Positive Decisions\t:\t" + str(truePositiveDecisions))
 
 
+    def create_groups(self, probabilities):
+        # This assumes `probabilities` is a numpy array of float values between 0 and 1.
+        groups = np.floor(probabilities * 10) % 10  # Extract the first digit after the decimal
+        return groups.astype(int)  # Convert to integer for use as group labels
 
-    def get_best_model(self,x_train, samples=200, h_vals=np.arange(0.001, 0.21, 0.01), seed=42):
+
+    def get_best_model(self, x_train, samples=200, h_vals=np.arange(0.001, 0.21, 0.01), seed=42):
+        # Using a smaller number of bandwidths and KFold cross-validation
+        groups_by_probability = self.create_groups(x_train)                                # group by probability
+        self.groups_by_geometry_shape = np.array(self.groups_by_geometry_shape)            # group by geometry type
+        groups = self.groups_by_geometry_shape + groups_by_probability / 10.0              # group by probability and geometry type
+        splits = set(groups)
+        # Count the number of distinct items
+        number_of_splits = len(splits)
         kernels = ['cosine', 'epanechnikov', 'gaussian', 'linear', 'tophat', 'exponential']
         print("Testing {} options with Grid Search".format(len(h_vals)*len(kernels)))
-        grid = GridSearchCV(KernelDensity(),
-                            {'bandwidth': h_vals, 'kernel': kernels},
-                            cv=LeaveOneOut())
-                            #,scoring=self.scorer)
-        #grid.fit(x_train[:, np.newaxis])
-        grid.fit(np.expand_dims(x_train, axis=1))
-        best_kde = grid.best_estimator_
-        return best_kde
+        grid = GridSearchCV(
+            KernelDensity(),
+            {'bandwidth': h_vals, 'kernel': kernels},
+            cv=GroupKFold(n_splits = number_of_splits),  # Using GroupKFold which is faster than LeaveOneOut
+            n_jobs=-1  # Utilize all available CPU cores for the grid search
+        )
+        grid.fit(np.expand_dims(x_train, axis=1), groups=groups)  # Fit model on the reshaped data
+        self.visualize_diagnostics(x_train)  # Visualize the distribution of the training data and the KDE fit
+        return grid.best_estimator_
 
 
     def find_estimate_threshold(self,model, interpolation_points=1000):
@@ -448,7 +538,7 @@ class KDE_Based_Algorithm:
       print("This is minimum ",self.minimum_probability_threshold)
       return threshold, est
 
-    def compute_estimate_cdf(self,model, target_range=(0, 1), interpolation_points=1000, margin=0.01):
+    def compute_estimate_cdf(self,model, target_range=(0, 1), interpolation_points=5000, margin=0.01):
         x_test, log_dens = self.get_logs(model, target_range, interpolation_points, margin)
         probs = np.exp(log_dens)
         # Estimate AUC
@@ -473,9 +563,23 @@ class KDE_Based_Algorithm:
         closest_tuple = None
         min_difference = float('inf')
 
+      #  target = target - 0.1  
         for first_num, second_num in tuples_list:
             difference = abs(target - second_num)
             if difference < min_difference:
                 min_difference = difference
                 threshold = first_num
         return threshold
+
+    def visualize_diagnostics(self, data):
+        plt.figure(figsize=(10, 6))
+        plt.hist(data, bins=30, density=True, alpha=0.5, label='Histogram of Data')
+        kde = gaussian_kde(data)
+        x_range = np.linspace(min(data), max(data), 1000)
+        plt.plot(x_range, kde(x_range), 'r-', label='KDE')
+        plt.title('Histogram and KDE Overlay')
+        plt.xlabel('Data Values')
+        plt.ylabel('Density')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
