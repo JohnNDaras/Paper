@@ -15,8 +15,8 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.callbacks import EarlyStopping
 
-from utilities import CsvReader
-from datamodel import RelatedGeometries
+#from utilities import CsvReader
+#from datamodel import RelatedGeometries
 
 class Heuristics_Algorithm:
 
@@ -27,7 +27,7 @@ class Heuristics_Algorithm:
         self.violation_limit = ViolationLimit
         self.CLASS_SIZE = 500
         self.NO_OF_FEATURES = 16
-        self.SAMPLE_SIZE = 2000
+        self.SAMPLE_SIZE = 100000
         self.POSITIVE_PAIR = 1
         self.NEGATIVE_PAIR = 0
         self.trainingPhase = False
@@ -121,10 +121,10 @@ class Heuristics_Algorithm:
             if s.length < self.minFeatures[8]:
                 self.minFeatures[8] = s.length
 
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
+        self.targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
         targetGeomId, pairId = 0, 0
-        for targetGeom in targetData:
+        for targetGeom in self.targetData:
             if self.maxFeatures[1] < targetGeom.envelope.area:
                 self.maxFeatures[1] = targetGeom.envelope.area
 
@@ -393,14 +393,14 @@ class Heuristics_Algorithm:
     def verification(self):
         sorted_list = SortedList()
         targetId, truePositiveDecisions = 0, 0
-        minimumWeightThreshold = 0.3
+        minimumWeightThreshold = 0.0
         instances = []
         self.relations.reset()
         counter = 0
 
-        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
+        #targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
-        for targetGeom in targetData:
+        for targetGeom in self.targetData:
             candidates = self.getCandidates(targetId, targetGeom)
             for candidateMatchId in candidates:
                 if self.validCandidate(candidateMatchId, targetGeom.envelope):
@@ -422,7 +422,7 @@ class Heuristics_Algorithm:
         while sorted_list and len(sorted_list) > self.budget:
             sorted_list.pop(0)  # Maintain budget
 
-        for weight, (candidateMatchId, targetId, targetGeom) in sorted_list:
+        for weight, (candidateMatchId, targetId, targetGeom) in reversed(sorted_list):
             counter += 1
             if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom, self.heuristicCondition, self.condition_limit , self.dynamic_factor, self.violation_limit) == 2:
               print("finish the program and return")
