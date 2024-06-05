@@ -3,12 +3,12 @@ import random
 import time
 from collections import defaultdict
 from sortedcontainers import SortedList
-from utilities import CsvReader
-from datamodel import RelatedGeometries
+#from utilities import CsvReader
+#from datamodel import RelatedGeometries
 
 # Constants for the application
-MINIMUM_WEIGHT = 0.1
-RANDOM_THRESHOLD = 15
+MINIMUM_WEIGHT = 0.0
+RANDOM_THRESHOLD = 20
 SAMPLE_SIZE = 1000
 
 class Extrapolation:
@@ -156,11 +156,11 @@ class Extrapolation:
 
     def verification(self):
         truePositiveDecisions = 0
-        maxsize = self.users_input * (self.detectedQP / SAMPLE_SIZE) * self.totalCandidatePairs
+        maxsize = (self.users_input- 0.1) * (self.detectedQP / SAMPLE_SIZE) * self.totalCandidatePairs
         print("Verification details - maxsize: ", maxsize)
         self.relations.reset()
 
-        for weight, (candidateMatchId, targetId, targetGeom) in self.sorted_list:
+        for weight, (candidateMatchId, targetId, targetGeom) in reversed(self.sorted_list):
             if truePositiveDecisions < math.floor(maxsize):
                 if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom):
                     truePositiveDecisions += 1
@@ -187,4 +187,3 @@ class Extrapolation:
 
     def validCandidate(self, candidateId, targetEnv):
         return self.sourceData[candidateId].envelope.intersects(targetEnv)
-
