@@ -5,11 +5,7 @@ import sys
 import time
 import pandas as pd
 from collections import defaultdict
-from sklearn.linear_model import LogisticRegression
 from shapely.geometry import LineString, MultiPolygon, Polygon
-from sklearn.neighbors import KernelDensity
-from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import LeaveOneOut
 from sortedcontainers import SortedList
 
 import tensorflow as tf
@@ -19,8 +15,8 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.callbacks import EarlyStopping
 
-from utilities import CsvReader
-from datamodel import RelatedGeometries
+#from utilities import CsvReader
+#from datamodel import RelatedGeometries
 
 class Extrapolation:
 
@@ -28,7 +24,7 @@ class Extrapolation:
         self.users_input = users_input
         self.CLASS_SIZE = 500
         self.NO_OF_FEATURES = 16
-        self.SAMPLE_SIZE = 2000
+        self.SAMPLE_SIZE = 500000
         self.POSITIVE_PAIR = 1
         self.NEGATIVE_PAIR = 0
         self.trainingPhase = False
@@ -122,10 +118,10 @@ class Extrapolation:
             if s.length < self.minFeatures[8]:
                 self.minFeatures[8] = s.length
 
-        targetData = CsvReader.readAllEntities("\t", self.targetFilePath)
+        self.targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
         targetGeomId, pairId = 0, 0
-        for targetGeom in targetData:
+        for targetGeom in self.targetData:
             if self.maxFeatures[1] < targetGeom.envelope.area:
                 self.maxFeatures[1] = targetGeom.envelope.area
 
@@ -398,16 +394,16 @@ class Extrapolation:
 
     def verification(self):
         sorted_list = SortedList()
-        maxsize = self.users_input * (self.detectedQP / self.N) * self.totalCandidatePairs
+        maxsize = (self.users_input - 0.1) * (self.detectedQP / self.N) * self.totalCandidatePairs
         targetId, truePositiveDecisions = 0, 0
-        minimumWeightThreshold = 0.3
+        minimumWeightThreshold = 0.0
         instances = []
         self.relations.reset()
         counter = 0
 
-        targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
+        #targetData = CsvReader.readAllEntities(self.delimiter, self.targetFilePath)
 
-        for targetGeom in targetData:
+        for targetGeom in self.targetData:
             candidates = self.getCandidates(targetId, targetGeom)
             for candidateMatchId in candidates:
                 if self.validCandidate(candidateMatchId, targetGeom.envelope):
@@ -429,7 +425,7 @@ class Extrapolation:
         while sorted_list and len(sorted_list) > self.budget:
             sorted_list.pop(0)  # Maintain budget
 
-        for weight, (candidateMatchId, targetId, targetGeom) in sorted_list:
+        for weight, (candidateMatchId, targetId, targetGeom) in reversed(sorted_list):
             counter += 1
             if self.relations.verifyRelations(candidateMatchId, targetId, self.sourceData[candidateMatchId], targetGeom):
                 truePositiveDecisions += 1
