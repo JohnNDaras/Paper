@@ -1,6 +1,6 @@
 import os
 import weka.core.jvm as jvm
-from kde_based_algorithm import KDE_Based_Algorithm
+from extrapolation import Extrapolation
 
 
 def setup_environment():
@@ -12,7 +12,7 @@ def main():
     main_dir = "/home/njdaras/Downloads/Geosfiles/data/"
     recall = input('Enter desired recall: ')
     
-    sg = KDE_Based_Algorithm(budget=5679576, qPairs=2362497, delimiter='\t',
+    sg = Extrapolation(budget=5679576, qPairs=2362497, delimiter='\t',
                              sourceFilePath=os.path.join(main_dir, 'regions_gr.csv'),
                              targetFilePath=os.path.join(main_dir, 'wildlife_sanctuaries.csv'),
                              target_recall=float(recall))
